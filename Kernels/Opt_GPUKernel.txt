@@ -1,0 +1,249 @@
+#include <iostream>
+#include <fstream>
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <chrono>
+#include <stdio.h>
+#include <cstdio>
+#include <string>
+
+using namespace std;
+using namespace std::chrono;
+
+// The weights array defines the weight values for each pixel in a 3×3 neighborhood when calculating the Local Binary Pattern (LBP)
+__constant__ int weights[3][3];  // Constant weights used in LBP computation
+
+#define BLOCK_WIDTH 32
+#define TILE_WIDTH (BLOCK_WIDTH + 2)  // 34x34 because we need 1 pixel border around every pixel 
+#define NUM_BORDER_PIXELS ((BLOCK_WIDTH * 4) + 4)  // Number of extra pixels to load into shared memory
+
+// Read binary PGM image (P5 format)
+bool readPGM(const std::string& filename, unsigned char** image, int* height, int* width) {
+    std::ifstream file(filename, std::ios::binary);
+    if (!file.is_open()) {
+        std::cerr << "Error opening file: " << filename << std::endl;
+        return false;
+    }
+
+    std::string magic;
+    std::getline(file, magic);  // Read magic number
+    if (magic != "P5") {
+        std::cerr << "Not a valid P5 PGM file: " << filename << std::endl;
+        return false;
+    }
+
+    file >> *width >> *height;
+    int maxVal;
+    file >> maxVal;
+    file.ignore();
+
+    *image = new unsigned char[*width * *height];
+    file.read(reinterpret_cast<char*>(*image), *width * *height);
+    file.close();
+    return true;
+}
+
+// Write binary PGM image (P5 format)
+void writePGM(const std::string& filename, unsigned char* image, int height, int width) {
+    std::ofstream file(filename, std::ios::binary);
+    if (!file.is_open()) {
+        std::cerr << "Error opening file: " << filename << std::endl;
+        return;
+    }
+
+    file << "P5\n" << width << " " << height << "\n255\n";
+    file.write(reinterpret_cast<char*>(image), width * height);
+    file.close();
+}
+
+
+/*
+HOW the tilling works here:
+1. The image is divided into blocks of size BLOCK_WIDTH x BLOCK_WIDTH.
+2. Each block is processed independently, with each thread handling a pixel in the block.
+3. Shared memory is used to load a TILE_WIDTH x TILE_WIDTH portion of the image, which includes the current block and its borders.
+4. The kernel computes the LBP value for each pixel in the block by comparing it with its 3x3 neighborhood.
+*/
+
+// GPU Kernel for LBP transformation with shared memory
+__global__ void OptGPU_LBP(unsigned char* d_inArr, unsigned char* d_outArr, int* d_histo, int rows, int cols) {
+    int bi = threadIdx.y;
+    int bj = threadIdx.x;
+    int i = blockIdx.y * blockDim.y + bi;  // Output image row
+    int j = blockIdx.x * blockDim.x + bj;  // Output image col
+    int padded_cols = cols + 2;  // Columns including padding, acts as new width
+
+    __shared__ unsigned char shared_inArr[TILE_WIDTH * TILE_WIDTH];  // Shared memory for image block
+    __shared__ int shared_histo[256];  // Shared histogram
+
+    int tid = bi * BLOCK_WIDTH + bj;
+
+    // Initialize shared histogram bins
+    if (tid < 256)
+        shared_histo[tid] = 0;
+
+    // Load main TILE_WIDTH x TILE_WIDTH portion
+	// the startIndex is used as the 'base address' such that each thread can calculate its own pixel in the shared memory
+    int startIndex = (blockIdx.y * blockDim.y) * padded_cols + blockIdx.x * blockDim.x; // convert 2D to 1D
+    int row = tid / TILE_WIDTH;
+    int col = tid % TILE_WIDTH;
+    int imgLocation = startIndex + (row * padded_cols) + col;
+
+    // avoid reading out of bounds
+    if (imgLocation < (rows + 2) * (cols + 2))
+        shared_inArr[tid] = d_inArr[imgLocation];
+    else
+        shared_inArr[tid] = 0;
+
+    // Load border pixels into shared memory
+    if (tid < NUM_BORDER_PIXELS) {
+        int border = tid + (BLOCK_WIDTH * BLOCK_WIDTH); 
+		// convert the border index to 2D (row/col) tjen scale it to the padded image
+        row = border / TILE_WIDTH;
+        col = border % TILE_WIDTH;
+        imgLocation = startIndex + (row * padded_cols) + col;
+
+        // check out of bounds
+        if (imgLocation < (rows + 2) * (cols + 2))
+            shared_inArr[border] = d_inArr[imgLocation];
+        else
+            shared_inArr[border] = 0;
+    }
+
+    __syncthreads();
+
+    // Compute LBP value if within img bounds
+    if (i < rows && j < cols) {
+        int oldVal = shared_inArr[(bi + 1) * TILE_WIDTH + (bj + 1)];
+        int newVal = 0;
+
+        // Loop through 3x3 neighborhood
+        for (int u = 0; u < 3; u++) {
+            for (int v = 0; v < 3; v++) {
+                // Compare pixel value with center
+                if (shared_inArr[(bi + u) * TILE_WIDTH + (bj + v)] >= oldVal) {
+                    newVal += weights[u][v];  // Add corresponding weight
+                }
+            }
+        }
+
+        // Write result pixel to output
+        d_outArr[i * cols + j] = newVal;
+
+        // Use atomicadd to make sure no RACE conditions happen!
+        atomicAdd(&shared_histo[newVal], 1);
+    }
+
+    __syncthreads();
+
+    // Write shared histogram to global histogram
+    if (tid < 256)
+        atomicAdd(&d_histo[tid], shared_histo[tid]);
+}
+
+int main(int argc, char** argv) {
+    string filePath = "C:/Users/User/OneDrive/Desktop/Computer-Arch.-Project/image1024.pgm";
+    string outputPath = "C:/Users/User/OneDrive/Desktop/Computer-Arch.-Project/Opt-GPUoutputs/outputOptGPU-1024.pgm";
+
+    unsigned char* h_imageArr = nullptr;
+    int width, height;
+
+    if (!readPGM(filePath, &h_imageArr, &height, &width))
+        return 1;
+
+    // creating CUDA events (timer to see how much time from gray to LBP)
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start); // create (& is address)
+    cudaEventCreate(&stop);
+
+    // Allocate and copy input image to device
+    unsigned char* d_inArr;
+    size_t imgSize = width * height;
+    cudaMalloc((void**)&d_inArr, imgSize);
+    cudaMemcpy(d_inArr, h_imageArr, imgSize, cudaMemcpyHostToDevice);
+
+    // Allocate output image on device and host
+    unsigned char* d_outArr;
+    cudaMalloc((void**)&d_outArr, imgSize);
+    unsigned char* h_outArr = new unsigned char[imgSize];
+
+    // Allocate histogram on device and initialize to 0
+    int histogram_h[256] = { 0 };
+    int* d_histo;
+
+    cudaMalloc(&d_histo, sizeof(int) * 256);
+    cudaMemcpy(d_histo, histogram_h, sizeof(int) * 256, cudaMemcpyHostToDevice);
+    
+    // Copy weights to constant memory
+    /*
+        [ 1   2   4
+        128   C   8
+         64  32  16 ]
+     */
+
+    int h_weights[3][3] = { 1, 2, 4, 128, 0, 8, 64, 32, 16 };
+    cudaMemcpyToSymbol(weights, &h_weights, sizeof(int) * 9);
+
+    dim3 blockDim(BLOCK_WIDTH, BLOCK_WIDTH);
+    dim3 gridDim(ceil((float)width / BLOCK_WIDTH), ceil((float)height / BLOCK_WIDTH));
+
+    // Create padded input image
+    unsigned char* paddedd_inArr;
+    size_t paddedSize = (height + 2) * (width + 2);
+    cudaMalloc((void**)&paddedd_inArr, paddedSize);
+    cudaMemset(paddedd_inArr, 0, paddedSize);
+
+    // Copy original image into padded 
+    cudaMemcpy2D(paddedd_inArr + (width + 2) + 1, width + 2,
+        d_inArr, width,
+        width, height,
+        cudaMemcpyDeviceToDevice);
+
+    // Launch kernel and measure time
+    cudaEventRecord(start);
+    OptGPU_LBP << <gridDim, blockDim >> > (paddedd_inArr, d_outArr, d_histo, height, width);
+
+    // place stop event into the default stream
+    cudaEventRecord(stop);
+
+    // block CPU execution until the specified event is recorded
+    cudaEventSynchronize(stop);
+
+    float milliseconds = 0;
+    // returns in the first argument the number of milliseconds time elapsed between the recording start and stop
+    cudaEventElapsedTime(&milliseconds, start, stop);
+
+    printf("GPU time is %.3f milliseconds\n", milliseconds);
+
+    // Copy output and histogram back to host
+    cudaMemcpy(h_outArr, d_outArr, imgSize, cudaMemcpyDeviceToHost);
+    cudaMemcpy(histogram_h, d_histo, sizeof(int) * 256, cudaMemcpyDeviceToHost);
+
+    // wait for device to complete all tasks
+	cudaDeviceSynchronize();
+
+    // Save result image
+    writePGM(outputPath, h_outArr, height, width);
+
+    // Print histogram
+    cout << "[";
+    for (int i = 0; i < 256; ++i) {
+        cout << histogram_h[i];
+        if (i < 255) cout << ", ";
+    }
+    cout << "]" << endl;
+
+    // Free memory
+    free(h_imageArr);
+    free(h_outArr);
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+    cudaFree(d_inArr);
+    cudaFree(d_outArr);
+    cudaFree(d_histo);
+    cudaFree(paddedd_inArr);
+
+    std::cout << "LBP processing done on GPU. Output saved to " << outputPath << "\n";
+
+    return 0;
+}
