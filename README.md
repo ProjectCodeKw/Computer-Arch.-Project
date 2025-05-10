@@ -20,11 +20,8 @@ This project implements the Local Binary Pattern (LBP) algorithm using CUDA C fo
             pip install Pillow pandas
             ```
 
-    * **Image Conversion:** Place the `P5.py` script in the same directory as your RGB image(s). To convert an image, run the script from your terminal, providing the input image path and the desired output size:
-        ```bash
-        python P5.py input_image.jpg output_image.pgm 256
-        ```
-        Replace `input_image.jpg` with the name of your RGB image, `output_image.pgm` with the desired name for the grayscale output image, and `256` with the desired size (e.g., 128, 512, 1024).
+    * **Image Conversion:** modify the variables inside the `P5.py` script to point to your image path and select the size of the image (square images only). 
+      
 
 3.  **CUDA Kernel Selection and Project Setup:**
 
