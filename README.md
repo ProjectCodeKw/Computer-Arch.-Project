@@ -36,7 +36,7 @@ This project implements the Local Binary Pattern (LBP) algorithm using CUDA C fo
     * **If using default images:** Ensure the paths correctly point to `image512.pgm`, `image128.pgm`, or `image1024.pgm` (or whichever default image you intend to use).
     * **If using custom converted images:** Update the `inputPath` variable with the **correct and absolute path** to your converted PGM image. **Important:** Make sure to use forward slashes `/` in the path and ensure there are no spaces in the path. For example:
         ```c++
-        const char* inputImagePath = "C:/Users/YourName/Pictures/converted_image.pgm";
+        std::string inputPath = "C:/Users/YourName/Pictures/converted_image.pgm";
         ```
 
 5.  **Modifying Output Path:**
@@ -44,7 +44,7 @@ This project implements the Local Binary Pattern (LBP) algorithm using CUDA C fo
     * Find the variable that specifies the output path for the processed LBP image.
     * Modify this `outputPath` variable to the desired location and filename for the resulting LBP image in PGM format. Ensure you use forward slashes `/` and no spaces in the path, similar to the input path. For example:
         ```c++
-        const char* outputPath = "D:/Results/lbp_processed.pgm";
+        std::string outputPath = "D:/Results/lbp_processed.pgm";
         ```
 
 6.  **Build and Run:**
