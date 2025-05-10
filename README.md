@@ -26,22 +26,22 @@ This project implements the Local Binary Pattern (LBP) algorithm using CUDA C fo
 3.  **CUDA Kernel Selection and Project Setup:**
 
     * Open your Visual Studio and create a new CUDA project.
-    * Choose the specific LBP kernel implementation you want to run (e.g., a basic LBP, a uniform LBP, etc.) and copy its CUDA C code (`.cu` file) into your Visual Studio CUDA project.
+    * Choose the specific LBP kernel implementation you want to run and copy its CUDA C code (`.cu` file) into your Visual Studio CUDA project.
     * Replace the default `kernel.cu` content (or whatever the default CUDA file is named) with the code of your chosen LBP kernel.
 
 4.  **Modifying Image Paths in `main()`:**
 
     * Locate the `main()` function in your CUDA C code.
-    * Find the variables that store the paths to the input images (e.g., `const char* inputImagePath = "image512.pgm";`).
+    * Find the variables that store the paths to the input images.
     * **If using default images:** Ensure the paths correctly point to `image512.pgm`, `image128.pgm`, or `image1024.pgm` (or whichever default image you intend to use).
-    * **If using custom converted images:** Update the `inputImagePath` variable with the **correct and absolute path** to your converted PGM image. **Important:** Make sure to use forward slashes `/` in the path and ensure there are no spaces in the path. For example:
+    * **If using custom converted images:** Update the `inputPath` variable with the **correct and absolute path** to your converted PGM image. **Important:** Make sure to use forward slashes `/` in the path and ensure there are no spaces in the path. For example:
         ```c++
         const char* inputImagePath = "C:/Users/YourName/Pictures/converted_image.pgm";
         ```
 
 5.  **Modifying Output Path:**
 
-    * Find the variable that specifies the output path for the processed LBP image (e.g., `const char* outputPath = "lbp_output.pgm";`).
+    * Find the variable that specifies the output path for the processed LBP image.
     * Modify this `outputPath` variable to the desired location and filename for the resulting LBP image in PGM format. Ensure you use forward slashes `/` and no spaces in the path, similar to the input path. For example:
         ```c++
         const char* outputPath = "D:/Results/lbp_processed.pgm";
@@ -51,7 +51,7 @@ This project implements the Local Binary Pattern (LBP) algorithm using CUDA C fo
 
     * Save all the changes in your Visual Studio project.
     * Build the CUDA project (typically by going to "Build" -> "Build Solution").
-    * Run the executable **without debugging** (typically by pressing Ctrl + F5 or going to "Debug" -> "Start Without Debugging").
+    * Run the executable **without debugging** (typically going to "Debug" -> "Start Without Debugging").
 
 7.  **Output and Verification:**
 
@@ -59,4 +59,4 @@ This project implements the Local Binary Pattern (LBP) algorithm using CUDA C fo
     * The processed LBP image will be saved in the location specified by the `outputPath` variable in PGM format.
     * To view the generated PGM image, you can use an online Netpbm viewer such as [https://paulcuth.me.uk/projects/netpbm-viewer/](https://paulcuth.me.uk/projects/netpbm-viewer/). Simply upload the generated `.pgm` file to this website to visualize the LBP texture.
 
-That's all you need to run the LBP project!
+That's all you need to run the LBP project! :D
